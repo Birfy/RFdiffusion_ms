@@ -65,7 +65,7 @@ Just like [the official implementation](https://github.com/FabianFuchsML/se3-tra
 
 The main differences between this implementation of SE(3)-Transformers and the official one are the following:
 
-- Training and inference support for multiple GPUs
+
 - Training and inference support for [Mixed Precision](https://arxiv.org/abs/1710.03740)
 - The [QM9 dataset from DGL](https://docs.dgl.ai/en/latest/api/python/dgl.data.html#qm9edge-dataset) is used and automatically downloaded
 - Significantly increased throughput
@@ -104,7 +104,7 @@ The following features were implemented in this model:
 
 - Support for edge features of any degree (1D, 3D, 5D, ...), whereas the official implementation only supports scalar invariant edge features (degree 0). Edge features with a degree greater than one are
 concatenated to node features of the same degree. This is required in order to reproduce published results on point cloud processing.
-- Data-parallel multi-GPU training (DDP)
+
 - Mixed precision training (autocast, gradient scaling)
 - Gradient accumulation
 - Model checkpointing
@@ -158,14 +158,11 @@ This model supports the following features::
 | Feature               | SE(3)-Transformer                
 |-----------------------|--------------------------
 |Automatic mixed precision (AMP)   |         Yes 
-|Distributed data parallel (DDP)   |         Yes 
+
          
 #### Features
 
 
-**Distributed data parallel (DDP)**
-
-[DistributedDataParallel (DDP)](https://pytorch.org/docs/stable/generated/torch.nn.parallel.DistributedDataParallel.html#torch.nn.parallel.DistributedDataParallel) implements data parallelism at the module level that can run across multiple GPUs or machines.
 
 **Automatic Mixed Precision (AMP)**
 
@@ -310,7 +307,7 @@ In the root directory, the most important files are:
 - `se3_transformer/model/basis.py`: logic for computing bases matrices
 - `se3_transformer/runtime/training.py`: training script, to be run as a python module
 - `se3_transformer/runtime/inference.py`: inference script, to be run as a python module
-- `se3_transformer/runtime/metrics.py`: MAE metric with support for multi-GPU synchronization
+- `se3_transformer/runtime/metrics.py`: MAE metric
 - `se3_transformer/runtime/loggers.py`: [DLLogger](https://github.com/NVIDIA/dllogger) and [W&B](wandb.ai/) loggers
 
 
@@ -424,15 +421,6 @@ The evaluation metric is the Mean Absolute Error (MAE).
 
 To enable Mixed Precision training, add the `--amp` flag.
 
-**Multi-GPU and multi-node**
-
-The training script supports the PyTorch elastic launcher to run on multiple GPUs or nodes.  Refer to the [official documentation](https://pytorch.org/docs/1.9.0/elastic/run.html).
-
-For example, to train on all available GPUs with AMP:
-
-```
-python -m torch.distributed.run --nnodes=1 --nproc_per_node=gpu --module se3_transformer.runtime.training --amp
-```
 
 
 ### Inference process
@@ -452,11 +440,11 @@ The following section shows how to run benchmarks measuring the model performanc
 
 #### Training performance benchmark
 
-To benchmark the training performance on a specific batch size, run `bash scripts/benchmarck_train.sh {BATCH_SIZE}` for single GPU, and `bash scripts/benchmarck_train_multi_gpu.sh {BATCH_SIZE}` for multi-GPU.
+To benchmark the training performance on a specific batch size, run `bash scripts/benchmark_train.sh {BATCH_SIZE}`.
 
 #### Inference performance benchmark
 
-To benchmark the inference performance on a specific batch size, run `bash scripts/benchmarck_inference.sh {BATCH_SIZE}`.
+To benchmark the inference performance on a specific batch size, run `bash scripts/benchmark_inference.sh {BATCH_SIZE}`.
 
 ### Results
 

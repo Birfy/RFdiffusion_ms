@@ -33,7 +33,7 @@ from tqdm import tqdm
 
 from se3_transformer.data_loading.data_module import DataModule
 from se3_transformer.model.basis import get_basis
-from se3_transformer.runtime.utils import get_local_rank, str2bool, using_tensor_cores
+from se3_transformer.runtime.utils import str2bool, using_tensor_cores
 
 
 def _get_relative_pos(qm9_graph: DGLGraph) -> Tensor:
@@ -154,7 +154,7 @@ class CachedBasesQM9EdgeDataset(QM9EdgeDataset):
                                 collate_fn=lambda samples: dgl.batch([sample[0] for sample in samples]))
         bases = []
         for i, graph in tqdm(enumerate(dataloader), total=len(dataloader), desc='Precomputing QM9 bases',
-                             disable=get_local_rank() != 0):
+                             disable=False):
             rel_pos = _get_relative_pos(graph)
             # Compute the bases with the GPU but convert the result to CPU to store in RAM
             bases.append({k: v.cpu() for k, v in get_basis(rel_pos.cuda(), **self.bases_kwargs).items()})

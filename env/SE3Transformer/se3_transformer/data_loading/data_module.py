@@ -21,17 +21,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2021 NVIDIA CORPORATION & AFFILIATES
 # SPDX-License-Identifier: MIT
 
-import torch.distributed as dist
 from abc import ABC
-from torch.utils.data import DataLoader, DistributedSampler, Dataset
-
-from se3_transformer.runtime.utils import get_local_rank
+from torch.utils.data import DataLoader, Dataset
 
 
 def _get_dataloader(dataset: Dataset, shuffle: bool, **kwargs) -> DataLoader:
-    # Classic or distributed dataloader depending on the context
-    sampler = DistributedSampler(dataset, shuffle=shuffle) if dist.is_initialized() else None
-    return DataLoader(dataset, shuffle=(shuffle and sampler is None), sampler=sampler, **kwargs)
+    # 单卡场景下的标准 DataLoader
+    return DataLoader(dataset, shuffle=shuffle, **kwargs)
 
 
 class DataModule(ABC):
@@ -39,12 +35,8 @@ class DataModule(ABC):
 
     def __init__(self, **dataloader_kwargs):
         super().__init__()
-        if get_local_rank() == 0:
-            self.prepare_data()
-
-        # Wait until rank zero has prepared the data (download, preprocessing, ...)
-        if dist.is_initialized():
-            dist.barrier(device_ids=[get_local_rank()])
+        # 单卡直接准备数据
+        self.prepare_data()
 
         self.dataloader_kwargs = {'pin_memory': True, 'persistent_workers': True, **dataloader_kwargs}
         self.ds_train, self.ds_val, self.ds_test = None, None, None

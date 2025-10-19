@@ -31,7 +31,6 @@ from typing import Union, List, Dict
 
 import numpy as np
 import torch
-import torch.distributed as dist
 from torch import Tensor
 
 
@@ -79,24 +78,6 @@ def to_cuda(x):
         return x.to(device=torch.cuda.current_device())
 
 
-def get_local_rank() -> int:
-    return int(os.environ.get('LOCAL_RANK', 0))
-
-
-def init_distributed() -> bool:
-    world_size = int(os.environ.get('WORLD_SIZE', 1))
-    distributed = world_size > 1
-    if distributed:
-        backend = 'nccl' if torch.cuda.is_available() else 'gloo'
-        dist.init_process_group(backend=backend, init_method='env://')
-        if backend == 'nccl':
-            torch.cuda.set_device(get_local_rank())
-        else:
-            logging.warning('Running on CPU only!')
-        assert torch.distributed.is_initialized()
-    return distributed
-
-
 def increase_l2_fetch_granularity():
     # maximum fetch granularity of L2: 128 bytes
     _libcudart = ctypes.CDLL('libcudart.so')
@@ -114,15 +95,6 @@ def seed_everything(seed):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-
-
-def rank_zero_only(fn):
-    @wraps(fn)
-    def wrapped_fn(*args, **kwargs):
-        if not dist.is_initialized() or dist.get_rank() == 0:
-            return fn(*args, **kwargs)
-
-    return wrapped_fn
 
 
 def using_tensor_cores(amp: bool) -> bool:

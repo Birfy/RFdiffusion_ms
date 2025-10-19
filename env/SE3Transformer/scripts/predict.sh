@@ -9,8 +9,7 @@ AMP=${2:-true}
 #          'U0_atom', 'U_atom', 'H_atom', 'G_atom', 'A', 'B', 'C'
 TASK=homo
 
-python -m torch.distributed.run --nnodes=1 --nproc_per_node=gpu --max_restarts 0 --module \
-  se3_transformer.runtime.inference \
+python -m se3_transformer.runtime.inference \
   --amp "$AMP" \
   --batch_size "$BATCH_SIZE" \
   --use_layer_norm \

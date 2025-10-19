@@ -25,15 +25,15 @@ from typing import List
 
 import torch
 import torch.nn as nn
-from torch.nn.parallel import DistributedDataParallel
+
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from se3_transformer.runtime import gpu_affinity
+
 from se3_transformer.runtime.arguments import PARSER
 from se3_transformer.runtime.callbacks import BaseCallback
 from se3_transformer.runtime.loggers import DLLogger
-from se3_transformer.runtime.utils import to_cuda, get_local_rank
+from se3_transformer.runtime.utils import to_cuda
 
 
 @torch.inference_mode()
@@ -43,7 +43,7 @@ def evaluate(model: nn.Module,
              args):
     model.eval()
     for i, batch in tqdm(enumerate(dataloader), total=len(dataloader), unit='batch', desc=f'Evaluation',
-                         leave=False, disable=(args.silent or get_local_rank() != 0)):
+                         leave=False, disable=args.silent):
         *input, target = to_cuda(batch)
 
         for callback in callbacks:
@@ -58,18 +58,15 @@ def evaluate(model: nn.Module,
 
 if __name__ == '__main__':
     from se3_transformer.runtime.callbacks import QM9MetricCallback, PerformanceCallback
-    from se3_transformer.runtime.utils import init_distributed, seed_everything
+    from se3_transformer.runtime.utils import seed_everything
     from se3_transformer.model import SE3TransformerPooled, Fiber
     from se3_transformer.data_loading import QM9DataModule
-    import torch.distributed as dist
     import logging
     import sys
 
-    is_distributed = init_distributed()
-    local_rank = get_local_rank()
     args = PARSER.parse_args()
 
-    logging.getLogger().setLevel(logging.CRITICAL if local_rank != 0 or args.silent else logging.INFO)
+    logging.getLogger().setLevel(logging.CRITICAL if args.silent else logging.INFO)
 
     logging.info('====== SE(3)-Transformer ======')
     logging.info('|  Inference on the test set  |')
@@ -101,13 +98,8 @@ if __name__ == '__main__':
 
     model.to(device=torch.cuda.current_device())
     if args.load_ckpt_path is not None:
-        checkpoint = torch.load(str(args.load_ckpt_path), map_location={'cuda:0': f'cuda:{local_rank}'})
+        checkpoint = torch.load(str(args.load_ckpt_path), map_location=f'cuda:{torch.cuda.current_device()}')
         model.load_state_dict(checkpoint['state_dict'])
-
-    if is_distributed:
-        nproc_per_node = torch.cuda.device_count()
-        affinity = gpu_affinity.set_affinity(local_rank, nproc_per_node)
-        model = DistributedDataParallel(model, device_ids=[local_rank], output_device=local_rank)
 
     test_dataloader = datamodule.test_dataloader() if not args.benchmark else datamodule.train_dataloader()
     evaluate(model,
@@ -119,8 +111,7 @@ if __name__ == '__main__':
         callback.on_validation_end()
 
     if args.benchmark:
-        world_size = dist.get_world_size() if dist.is_initialized() else 1
-        callbacks = [PerformanceCallback(logger, args.batch_size * world_size, warmup_epochs=1, mode='inference')]
+        callbacks = [PerformanceCallback(logger, args.batch_size, warmup_epochs=1, mode='inference')]
         for _ in range(6):
             evaluate(model,
                      test_dataloader,

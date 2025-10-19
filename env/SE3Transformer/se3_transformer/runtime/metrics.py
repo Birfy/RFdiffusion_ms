@@ -24,7 +24,6 @@
 from abc import ABC, abstractmethod
 
 import torch
-import torch.distributed as dist
 from torch import Tensor
 
 
@@ -40,9 +39,8 @@ class Metric(ABC):
         setattr(self, name, default)
 
     def synchronize(self):
-        if dist.is_initialized():
-            for state in self.states:
-                dist.all_reduce(getattr(self, state), op=dist.ReduceOp.SUM, group=dist.group.WORLD)
+        # 单卡，无需同步
+        return
 
     def __call__(self, *args, **kwargs):
         self.update(*args, **kwargs)

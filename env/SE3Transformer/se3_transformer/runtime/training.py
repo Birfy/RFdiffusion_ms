@@ -27,51 +27,45 @@ from typing import List
 
 import numpy as np
 import torch
-import torch.distributed as dist
 import torch.nn as nn
 from apex.optimizers import FusedAdam, FusedLAMB
 from torch.nn.modules.loss import _Loss
-from torch.nn.parallel import DistributedDataParallel
 from torch.optim import Optimizer
-from torch.utils.data import DataLoader, DistributedSampler
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from se3_transformer.data_loading import QM9DataModule
 from se3_transformer.model import SE3TransformerPooled
 from se3_transformer.model.fiber import Fiber
-from se3_transformer.runtime import gpu_affinity
+
 from se3_transformer.runtime.arguments import PARSER
 from se3_transformer.runtime.callbacks import QM9MetricCallback, QM9LRSchedulerCallback, BaseCallback, \
     PerformanceCallback
 from se3_transformer.runtime.inference import evaluate
 from se3_transformer.runtime.loggers import LoggerCollection, DLLogger, WandbLogger, Logger
-from se3_transformer.runtime.utils import to_cuda, get_local_rank, init_distributed, seed_everything, \
+from se3_transformer.runtime.utils import to_cuda, seed_everything, \
     using_tensor_cores, increase_l2_fetch_granularity
 
 
 def save_state(model: nn.Module, optimizer: Optimizer, epoch: int, path: pathlib.Path, callbacks: List[BaseCallback]):
-    """ Saves model, optimizer and epoch states to path (only once per node) """
-    if get_local_rank() == 0:
-        state_dict = model.module.state_dict() if isinstance(model, DistributedDataParallel) else model.state_dict()
-        checkpoint = {
-            'state_dict': state_dict,
-            'optimizer_state_dict': optimizer.state_dict(),
-            'epoch': epoch
-        }
-        for callback in callbacks:
-            callback.on_checkpoint_save(checkpoint)
+    """ Saves model, optimizer and epoch states to path """
+    state_dict = model.state_dict()
+    checkpoint = {
+        'state_dict': state_dict,
+        'optimizer_state_dict': optimizer.state_dict(),
+        'epoch': epoch
+    }
+    for callback in callbacks:
+        callback.on_checkpoint_save(checkpoint)
 
-        torch.save(checkpoint, str(path))
-        logging.info(f'Saved checkpoint to {str(path)}')
+    torch.save(checkpoint, str(path))
+    logging.info(f'Saved checkpoint to {str(path)}')
 
 
 def load_state(model: nn.Module, optimizer: Optimizer, path: pathlib.Path, callbacks: List[BaseCallback]):
     """ Loads model, optimizer and epoch states from path """
-    checkpoint = torch.load(str(path), map_location={'cuda:0': f'cuda:{get_local_rank()}'})
-    if isinstance(model, DistributedDataParallel):
-        model.module.load_state_dict(checkpoint['state_dict'])
-    else:
-        model.load_state_dict(checkpoint['state_dict'])
+    checkpoint = torch.load(str(path), map_location=f'cuda:{torch.cuda.current_device()}')
+    model.load_state_dict(checkpoint['state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
     for callback in callbacks:
@@ -81,10 +75,10 @@ def load_state(model: nn.Module, optimizer: Optimizer, path: pathlib.Path, callb
     return checkpoint['epoch']
 
 
-def train_epoch(model, train_dataloader, loss_fn, epoch_idx, grad_scaler, optimizer, local_rank, callbacks, args):
+def train_epoch(model, train_dataloader, loss_fn, epoch_idx, grad_scaler, optimizer, callbacks, args):
     losses = []
     for i, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader), unit='batch',
-                         desc=f'Epoch {epoch_idx}', disable=(args.silent or local_rank != 0)):
+                         desc=f'Epoch {epoch_idx}', disable=args.silent):
         *inputs, target = to_cuda(batch)
 
         for callback in callbacks:
@@ -120,11 +114,6 @@ def train(model: nn.Module,
           args):
     device = torch.cuda.current_device()
     model.to(device=device)
-    local_rank = get_local_rank()
-    world_size = dist.get_world_size() if dist.is_initialized() else 1
-
-    if dist.is_initialized():
-        model = DistributedDataParallel(model, device_ids=[local_rank], output_device=local_rank)
 
     model.train()
     grad_scaler = torch.cuda.amp.GradScaler(enabled=args.amp)
@@ -144,14 +133,7 @@ def train(model: nn.Module,
         callback.on_fit_start(optimizer, args)
 
     for epoch_idx in range(epoch_start, args.epochs):
-        if isinstance(train_dataloader.sampler, DistributedSampler):
-            train_dataloader.sampler.set_epoch(epoch_idx)
-
-        loss = train_epoch(model, train_dataloader, loss_fn, epoch_idx, grad_scaler, optimizer, local_rank, callbacks, args)
-        if dist.is_initialized():
-            loss = torch.tensor(loss, dtype=torch.float, device=device)
-            torch.distributed.all_reduce(loss)
-            loss = (loss / world_size).item()
+        loss = train_epoch(model, train_dataloader, loss_fn, epoch_idx, grad_scaler, optimizer, callbacks, args)
 
         logging.info(f'Train loss: {loss}')
         logger.log_metrics({'train loss': loss}, epoch_idx)
@@ -183,11 +165,9 @@ def print_parameters_count(model):
 
 
 if __name__ == '__main__':
-    is_distributed = init_distributed()
-    local_rank = get_local_rank()
     args = PARSER.parse_args()
 
-    logging.getLogger().setLevel(logging.CRITICAL if local_rank != 0 or args.silent else logging.INFO)
+    logging.getLogger().setLevel(logging.CRITICAL if args.silent else logging.INFO)
 
     logging.info('====== SE(3)-Transformer ======')
     logging.info('|      Training procedure     |')
@@ -215,14 +195,10 @@ if __name__ == '__main__':
 
     if args.benchmark:
         logging.info('Running benchmark mode')
-        world_size = dist.get_world_size() if dist.is_initialized() else 1
-        callbacks = [PerformanceCallback(logger, args.batch_size * world_size)]
+        callbacks = [PerformanceCallback(logger, args.batch_size)]
     else:
         callbacks = [QM9MetricCallback(logger, targets_std=datamodule.targets_std, prefix='validation'),
                      QM9LRSchedulerCallback(logger, epochs=args.epochs)]
-
-    if is_distributed:
-        gpu_affinity.set_affinity(gpu_id=get_local_rank(), nproc_per_node=torch.cuda.device_count())
 
     print_parameters_count(model)
     logger.log_hyperparams(vars(args))

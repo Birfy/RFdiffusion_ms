@@ -27,20 +27,15 @@ from enum import Enum
 from typing import Dict, Any, Callable, Optional
 
 import dllogger
-import torch.distributed as dist
 import wandb
 from dllogger import Verbosity
 
-from se3_transformer.runtime.utils import rank_zero_only
-
 
 class Logger(ABC):
-    @rank_zero_only
     @abstractmethod
     def log_hyperparams(self, params):
         pass
 
-    @rank_zero_only
     @abstractmethod
     def log_metrics(self, metrics, step=None):
         pass
@@ -71,12 +66,10 @@ class LoggerCollection(Logger):
     def __getitem__(self, index):
         return [logger for logger in self.loggers][index]
 
-    @rank_zero_only
     def log_metrics(self, metrics, step=None):
         for logger in self.loggers:
             logger.log_metrics(metrics, step)
 
-    @rank_zero_only
     def log_hyperparams(self, params):
         for logger in self.loggers:
             logger.log_hyperparams(params)
@@ -85,17 +78,14 @@ class LoggerCollection(Logger):
 class DLLogger(Logger):
     def __init__(self, save_dir: pathlib.Path, filename: str):
         super().__init__()
-        if not dist.is_initialized() or dist.get_rank() == 0:
-            save_dir.mkdir(parents=True, exist_ok=True)
-            dllogger.init(
-                backends=[dllogger.JSONStreamBackend(Verbosity.DEFAULT, str(save_dir / filename))])
+        save_dir.mkdir(parents=True, exist_ok=True)
+        dllogger.init(
+            backends=[dllogger.JSONStreamBackend(Verbosity.DEFAULT, str(save_dir / filename))])
 
-    @rank_zero_only
     def log_hyperparams(self, params):
         params = self._sanitize_params(params)
         dllogger.log(step="PARAMETER", data=params)
 
-    @rank_zero_only
     def log_metrics(self, metrics, step=None):
         if step is None:
             step = tuple()
@@ -112,21 +102,18 @@ class WandbLogger(Logger):
             project: Optional[str] = None
     ):
         super().__init__()
-        if not dist.is_initialized() or dist.get_rank() == 0:
-            save_dir.mkdir(parents=True, exist_ok=True)
-            self.experiment = wandb.init(name=name,
-                                         project=project,
-                                         id=id,
-                                         dir=str(save_dir),
-                                         resume='allow',
-                                         anonymous='must')
+        save_dir.mkdir(parents=True, exist_ok=True)
+        self.experiment = wandb.init(name=name,
+                                     project=project,
+                                     id=id,
+                                     dir=str(save_dir),
+                                     resume='allow',
+                                     anonymous='must')
 
-    @rank_zero_only
     def log_hyperparams(self, params: Dict[str, Any]) -> None:
         params = self._sanitize_params(params)
         self.experiment.config.update(params, allow_val_change=True)
 
-    @rank_zero_only
     def log_metrics(self, metrics: Dict[str, float], step: Optional[int] = None) -> None:
         if step is not None:
             self.experiment.log({**metrics, 'epoch': step})
